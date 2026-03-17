@@ -1495,7 +1495,7 @@ Así te ayudo más rápido 😊`;
         model: "claude-haiku-4-5-20251001",
         max_tokens: 500,
         system: buildSystemPrompt(userNumber),
-        messages: conversationMemory[userNumber],
+        messages: conversationMemory[userNumber].map(m => ({ role: m.role, content: m.content })),
       },
       {
         headers: {
