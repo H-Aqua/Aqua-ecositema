@@ -1,0 +1,17 @@
+{
+  "name": "aqua-ecosistema",
+  "version": "1.0.0",
+  "description": "Pulpín + Agentes IA — AQUA Toro y Pereira",
+  "scripts": {
+    "start": "node servidor_principal.js",
+    "pulpin":     "node bot_pulpin_v7.js",
+    "estados":    "node agente_estados.js",
+    "inventario": "node agente_inventario.js",
+    "marketing":  "node agente_marketing.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios":   "^1.6.0",
+    "form-data": "^4.0.0"
+  }
+}
