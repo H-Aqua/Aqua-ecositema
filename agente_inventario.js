@@ -24,6 +24,7 @@ const LOYVERSE_API_KEY  = process.env.LOYVERSE_API_KEY || null;
 
 const NUMERO_KENETH     = "573003808708";
 const NUMERO_PEREIRA    = "573157260804";
+const NUMERO_ASESOR     = "573137200415"; // ← recibe los reportes de inventario
 
 // Archivo donde se guarda el registro de demanda (persistente entre reinicios)
 const ARCHIVO_DEMANDA   = path.join(__dirname, "datos_demanda.json");
@@ -160,22 +161,29 @@ async function generarReporte() {
   }
 
   // Generar análisis con Claude
-  const prompt = `Eres el asistente de inventario de AQUA, tienda de peces en Colombia.
+  const prompt = `Eres el asistente de inventario de AQUA, tienda de peces ornamentales en Colombia (Toro Valle y Pereira Risaralda).
 
 DATOS DE LA SEMANA:
 Productos más consultados:
 ${topConsultas}
 
-Productos que pidieron y no había:
+Productos que pidieron y no había (demanda insatisfecha):
 ${topSinStock || "Ninguno registrado"}
 ${stockInfo}
 
-Genera un reporte corto (máximo 8 líneas) para Keneth con:
-1. Qué reponer urgente
-2. Qué se está vendiendo bien y conviene tener más stock
-3. Una recomendación de compra para esta semana
+Genera un reporte para el equipo con estas 5 secciones:
 
-Sin markdown. Directo y útil.`;
+1. REPOSICIÓN URGENTE: Qué reponer ya esta semana (los que más se pidieron y no había)
+
+2. STOCK A AUMENTAR: Qué se está vendiendo bien y conviene tener más cantidad
+
+3. PRODUCTOS NUEVOS SUGERIDOS: Basándote en lo que consultan los clientes, sugiere 2-3 productos que AQUA podría agregar a su catálogo que complementen lo que ya vende (ej: si piden mucho plantas pero poco fertilizante, o si piden peces que no tenemos). Sé específico con el nombre del producto.
+
+4. BÚSQUEDA DE PROVEEDORES: Para los 2 productos con más demanda sin stock, sugiere dónde buscar mejor precio en Colombia (distribuidoras de Bogotá, Medellín, o Cali que suelen tener peces ornamentales al por mayor como Acuarios El Dorado, Tropical Fish Colombia, o similares reconocidos en el sector).
+
+5. ACCIÓN DE LA SEMANA: Una sola recomendación concreta de compra para hacer esta semana.
+
+Máximo 20 líneas en total. Sin markdown excesivo. En español directo.`;
 
   try {
     const resp = await axios.post(
@@ -203,7 +211,13 @@ Sin markdown. Directo y útil.`;
       { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
     );
 
-    console.log("✅ Reporte enviado al equipo");
+    // Enviar al asesor (3137200415)
+    await axios.post(`${WHAPI_URL}/messages/text`,
+      { to: `${NUMERO_ASESOR}@s.whatsapp.net`, body: mensaje },
+      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+    );
+
+    console.log("✅ Reporte enviado al equipo y al asesor");
   } catch (err) {
     console.error("❌ Error generando reporte:", err.response?.data || err.message);
   }
