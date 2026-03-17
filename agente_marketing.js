@@ -19,6 +19,7 @@ const WHAPI_TOKEN       = "0p72NednwTdDtZgW42pZw2TPWqjGWGuL";
 const WHAPI_URL         = "https://gate.whapi.cloud";
 
 const NUMERO_ADMIN      = "573003808708"; // Keneth recibe el plan
+const NUMERO_ASESOR     = "573137200415"; // también recibe el plan de marketing
 const INVENTARIO_URL    = process.env.INVENTARIO_URL || "http://localhost:3002"; // URL del agente de inventario
 
 // Lunes a las 7am Colombia (12 UTC)
@@ -119,10 +120,20 @@ async function generarPlanMarketing() {
     contextoFestivos = "\nSemana sin festividades próximas — foco en catálogo general";
   }
 
+  // Identificar productos menos rotados (los que menos consultas tuvieron esta semana)
+  let contextoMenosRotados = "";
+  if (inventario) {
+    const todos = inventario.topProductos || [];
+    const menosRotados = todos.slice(-3).map(p => p.producto);
+    if (menosRotados.length > 0) {
+      contextoMenosRotados = `\nPRODUCTOS CON MENOS MOVIMIENTO ESTA SEMANA: ${menosRotados.join(", ")} (impulsar para rotación uniforme)`;
+    }
+  }
+
   const prompt = `Eres el estratega de marketing de AQUA, tienda de peces ornamentales, acuariofilia y hámsteres en Toro (Valle) y Pereira (Risaralda), Colombia.
 
 CONTEXTO DE LA SEMANA: ${semana}
-${contextoInventario}
+${contextoInventario}${contextoMenosRotados}
 ${contextoFestivos}
 
 NUESTROS CANALES: WhatsApp Business (chatbot Pulpín), Estados de WhatsApp (4/día), Instagram @aqualife.co, Facebook
@@ -134,16 +145,19 @@ GENERA UN PLAN DE MARKETING PARA ESTA SEMANA con:
 2. ESTADOS SUGERIDOS (4 por día, brevísimos — el texto va en el caption de la imagen):
    Lunes, Martes, Miércoles, Jueves, Viernes, Sábado (4 cada uno)
    Domingo (2)
+   Prioriza en los estados: primero los productos más pedidos, segundo los menos rotados para equilibrar ventas.
 
-3. PROMO ESPECIAL (si aplica por festividad): qué producto, qué descuento o combo sugerir, por qué tiene sentido esta semana
+3. PRODUCTO A IMPULSAR ESTA SEMANA: Elige UN producto que tenga menos rotación y sugiere cómo presentarlo para que se venda más (foto sugerida, caption, horario ideal de estado).
 
-4. PRODUCTO A IMPULSAR: El que más consultas tuvo o el que conviene rotar — cómo presentarlo
+4. PRODUCTO ESTRELLA: El que más consultas tuvo — cómo seguir aprovechando ese momentum.
 
-5. MENSAJE PARA MAYORISTAS: Una línea para el mensaje de mayoristas del lunes
+5. PROMO ESPECIAL (si aplica por festividad o producto sin rotar): qué producto, qué descuento o combo, por qué tiene sentido esta semana.
 
-El plan debe sonar NATURAL para Colombia, no forzado. Si hay festividad → conéctala con los peces o mascotas de forma creativa. Si no hay festividad → enfócate en los productos que más se mueven.
+6. MENSAJE PARA MAYORISTAS: Una línea para el mensaje de mayoristas del lunes, enfocada en lo más disponible.
 
-Máximo 25 líneas. Directo y accionable. Sin markdown excesivo.`;
+El plan debe sonar NATURAL para Colombia, no forzado. Si hay festividad → conéctala creativamente. Si no hay → equilibra rotación de inventario.
+Precios siempre en pesos colombianos completos ($17.000, no $17k).
+Máximo 30 líneas. Directo y accionable.`;
 
   try {
     const resp = await axios.post(
@@ -164,7 +178,13 @@ Máximo 25 líneas. Directo y accionable. Sin markdown excesivo.`;
       { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
     );
 
-    console.log("✅ Plan de marketing enviado");
+    // Enviar también al asesor
+    await axios.post(`${WHAPI_URL}/messages/text`,
+      { to: `${NUMERO_ASESOR}@s.whatsapp.net`, body: mensaje },
+      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+    );
+
+    console.log("✅ Plan de marketing enviado al equipo y al asesor");
     return plan;
   } catch (err) {
     console.error("❌ Error generando plan:", err.response?.data || err.message);
