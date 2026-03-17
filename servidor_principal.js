@@ -29,9 +29,20 @@ for (const proc of procesos) {
 
   child.on("exit", (code) => {
     console.log(`${proc.color}[${proc.nombre}]${reset} Proceso terminó (código ${code}) — reiniciando en 5 seg...`);
-    setTimeout(() => {
-      fork(path.join(__dirname, proc.archivo), [], { env: { ...process.env } });
-    }, 5000);
+    const reintentos = { count: 0 };
+    const reiniciar = () => {
+      if (reintentos.count >= 5) {
+        console.error(`${proc.color}[${proc.nombre}]${reset} Demasiados reinicios consecutivos — abortando este agente.`);
+        return;
+      }
+      reintentos.count++;
+      const nuevo = fork(path.join(__dirname, proc.archivo), [], { env: { ...process.env } });
+      nuevo.on("exit", (c) => {
+        console.log(`${proc.color}[${proc.nombre}]${reset} Reinicio #${reintentos.count} terminó (código ${c}) — reintentando en 10 seg...`);
+        setTimeout(reiniciar, 10000);
+      });
+    };
+    setTimeout(reiniciar, 5000);
   });
 
   console.log(`${proc.color}[${proc.nombre}]${reset} ✅ Iniciado`);
