@@ -27,7 +27,7 @@ function guardarEstado() {
       comprasConfirmadas,
       carritoUsuario,
       conversacionesResumen: Object.fromEntries(
-        Object.entries(conversationMemory).map(([n, h]) => [n, h.slice(-3)])
+        Object.entries(conversationMemory).map(([n, h]) => [n, h.slice(-8)])
       ),
     }));
   } catch (e) { console.error("⚠️ Error guardando estado:", e.message); }
@@ -76,7 +76,8 @@ const ETIQUETA_MAYORISTA = "clientes por mayor"; // ← ajusta si tu etiqueta se
 
 // Número que tiene autorización para disparar el envío masivo
 // Envía "enviar mayoristas" a tu propio número de WhatsApp Business
-const NUMERO_ADMIN = "573003808708"; // ← pon tu número sin + ni espacios
+const NUMERO_ADMIN   = "573003808708"; // ← pon tu número sin + ni espacios
+const NUMERO_ASESOR  = "573137200415"; // ← número que recibe alertas de clientes que piden asesor
 
 // ── CATÁLOGO PDF / IMÁGENES / VIDEO PARA MAYORISTAS ─────────────────────────
 // Sube tu catálogo PDF a Google Drive → Compartir → "Cualquiera con el enlace"
@@ -182,15 +183,15 @@ Por favor envía el comprobante de pago 🧾 y en seguida confirmamos tu pedido 
 //   1. Abre Google Maps → busca tu tienda → clic en "Compartir" → "Copiar enlace"
 //   2. Pega el enlace aquí abajo
 const UBICACION_TORO = {
-  texto:  "📍 *AQUA Toro*
+  texto:  `📍 *AQUA Toro*
 Calle 11 con Cra. 5a, Toro (Valle del Cauca)
-🕐 Lun-Sáb 9am-12:30 / 3pm-7pm | Dom 9am-1pm",
+🕐 Lun-Sáb 9am-12:30 / 3pm-7pm | Dom 9am-1pm`,
   mapa:   "https://www.google.com/maps/dir//Aqualife,+Calle+11+con,+Cra.+5a,+Toro,+Valle+del+Cauca/@4.6116736,-76.0781136,17z",
 };
 const UBICACION_PEREIRA = {
-  texto:  "📍 *AQUA Pereira*
+  texto:  `📍 *AQUA Pereira*
 Calle 26 #7-65, Pereira (Risaralda)
-🕐 Lun-Sáb 10am-12:30 / 1:30pm-7pm | Dom 10am-1pm",
+🕐 Lun-Sáb 10am-12:30 / 1:30pm-7pm | Dom 10am-1pm`,
   mapa:   "https://www.google.com/maps?q=Cl.+26+%237-65,+Pereira,+Risaralda",
 };
 
@@ -233,7 +234,6 @@ const CATALOGO = {
 
   goldfish: {
     keywords: ["goldfish","gold fish","pez dorado","pez de colores","goldfish bronce","goldfish mediano","goldfish grande"],
-    imagen: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Camponotus_flavomarginatus_ant.jpg/320px-Camponotus_flavomarginatus_ant.jpg",
     imagen: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Goldfish3.jpg/800px-Goldfish3.jpg",
     nombre: "Goldfish 🐠",
     descripcion: "Los peces más queridos del mundo con más de 1000 años como mascotas. Aguantan agua fría sin calefactor, perfectos para acuarios decorativos de sala o jardín. Sociables, reconocen a su dueño y van bien en grupos.",
@@ -866,6 +866,9 @@ const FRASES_PAUSA = [
   "hablar con un humano","hablar con un asesor","asesor real",
   "persona real","operador","asistente real","hablar con estevan",
   "hablar con keneth","me comunicas","comunícame",
+  "comunicame con un asesor","quiero un asesor","necesito un asesor",
+  "con una persona","asesor por favor","necesito ayuda humana",
+  "hablar con alguien","quiero hablar","me puedes comunicar",
 ];
 
 function debePonerEnPausa(texto) {
@@ -1035,7 +1038,9 @@ LUCES: Mini Light $25k | T-2 $32-38k | T-4 $46k | T-6 $58k | Bicolor sumergible 
 PLANTAS: Ambulia, Cabomba, Anubia, Hygrophila, Vallisneria, Rótala, Ludwigia, Bacopa, Flotantes
 HÁMSTER: Jaulas, Ruedas, Bolas, Bebederos, Viruta, Arena chinchilla, Nido
 
-DIAGNÓSTICOS: Puntitos blancos→Ich→White Spot $7-30k | Aletas deshilachadas→Furan Green $8k | Boquea superficie→amoniaco→cambio agua+eliminador $10k | Acuario nuevo→bacterias nitrificantes $10k | Apagado sin síntoma→Paraguard $12k | Puntos dorados→Velvet→Verde malaquita $5k`;
+DIAGNÓSTICOS: Puntitos blancos→Ich→White Spot $7.000-30.000 | Aletas deshilachadas→Furan Green $8.000 | Boquea superficie→amoniaco→cambio agua+eliminador $10.000 | Acuario nuevo→bacterias nitrificantes $10.000 | Apagado sin síntoma→Paraguard $12.000 | Puntos dorados→Velvet→Verde malaquita $5.000
+
+IMPORTANTE: Los precios son siempre en pesos colombianos (COP). Escríbelos así: $17.000, $100.000, $2.000. Nunca uses "k" sola — usa el precio completo o "$17k COP" si necesitas abreviar.`;
 
 function buildSystemPrompt(userNumber) {
   const carrito = carritoUsuario[userNumber] || [];
@@ -1238,7 +1243,7 @@ function registrarCompra(userNumber) {
 }
 
 // ─── PROCESAR MENSAJES ────────────────────────────────────────────────────────
-async function procesarMensajes(userNumber, tipoMensaje) {
+async function procesarMensajes(userNumber, tipoMensaje, message) {
   try {
     const textos = pendingMessages[userNumber] || [];
     delete pendingMessages[userNumber];
@@ -1259,29 +1264,68 @@ async function procesarMensajes(userNumber, tipoMensaje) {
     // ── Pausa → asesor humano ──
     if (debePonerEnPausa(textoUnido)) {
       pausedChats[userNumber] = Date.now();
+
+      // Mensaje al cliente
       await axios.post(
         `${WHAPI_URL}/messages/text`,
         { to: userNumber, body: "Claro, en un momento te atiende uno de nuestros asesores 🐙 Ya les aviso que estás aquí." },
         { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
       );
-      const historial = conversationMemory[userNumber] || [];
-      await notificarEquipo(userNumber, [...historial,
+
+      // Construir contexto breve de la conversación para el asesor
+      const historialAsesor = conversationMemory[userNumber] || [];
+      const telefonoCliente = userNumber.replace("@s.whatsapp.net", "");
+      const nombreCliente   = perfilUsuario[userNumber]?.nombre || "Cliente";
+      const ciudadCliente   = ciudadActual ? ` (${ciudadActual.toUpperCase()})` : "";
+      const carritoAsesor   = (carritoUsuario[userNumber] || []);
+      const carritoTexto    = carritoAsesor.length > 0
+        ? "\n🛒 Le interesa: " + carritoAsesor.map(i => i.nombre).join(", ")
+        : "";
+      const ultimosMensajes = historialAsesor.slice(-4)
+        .map(m => `${m.role === "user" ? "Cliente" : "Pulpín"}: ${m.content}`)
+        .join("\n");
+
+      const mensajeAsesor = `🔔 *Cliente solicita asesor* 🐙${ciudadCliente}
+
+👤 ${nombreCliente} — ${telefonoCliente}${carritoTexto}
+
+📋 Contexto:
+${ultimosMensajes || "Sin historial previo"}
+
+👆 Toca el número para contactarlo directamente.`;
+
+      // Notificar al asesor (3137200415)
+      try {
+        await axios.post(`${WHAPI_URL}/messages/text`,
+          { to: `${NUMERO_ASESOR}@s.whatsapp.net`, body: mensajeAsesor },
+          { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+        );
+        console.log(`🔔 Asesor notificado — cliente ${telefonoCliente}`);
+      } catch (err) {
+        console.error("❌ Error notificando asesor:", err.message);
+      }
+
+      // También notificar al equipo interno como antes
+      await notificarEquipo(userNumber, [...historialAsesor,
         { role: "user", content: textoUnido },
         { role: "assistant", content: "[Cliente solicita asesor humano]" }
       ], ciudadActual);
       return;
     }
 
-    // ── MEJORA 5: Si el cliente mandó una imagen → Claude Vision la analiza ──
+    // ── Manejo de imágenes ────────────────────────────────────────────────────
     if (tipoMensaje === "image") {
-      if (VISION_ACTIVO) {
+
+      // ── Intentar analizar con Claude Vision (si hay URL disponible) ──
+      const imgUrl = message.image?.link || message.photo?.link || null;
+
+      if (imgUrl) {
         try {
-          const imgUrl     = message.image?.link || message.photo?.link;
-          const imgResp    = await axios.get(imgUrl, {
+          const imgResp = await axios.get(imgUrl, {
             responseType: "arraybuffer",
             headers: { Authorization: `Bearer ${WHAPI_TOKEN}` }
           });
-          const b64 = Buffer.from(imgResp.data).toString("base64");
+          const b64  = Buffer.from(imgResp.data).toString("base64");
           const mime = message.image?.mime_type || "image/jpeg";
 
           const visionResp = await axios.post(
@@ -1289,14 +1333,16 @@ async function procesarMensajes(userNumber, tipoMensaje) {
             {
               model: "claude-haiku-4-5-20251001",
               max_tokens: 300,
-              system: `Eres Pulpín 🐙 de AQUA, tienda de peces. Analiza la imagen enviada por un cliente.
-Si es un pez enfermo o con síntomas visibles: describe brevemente qué ves, diagnostica el problema y recomienda el medicamento específico de nuestra tienda (White Spot $7-30k, Verde malaquita $5k, Furan Green $8k, Paraguard $12k, Azul metileno $2-3k).
-Si es un comprobante de pago o captura bancaria: responde solo "COMPROBANTE".
-Si es un acuario o foto de peces sanos: comenta algo positivo y pregunta si necesitan algo.
-Si no está claro: pide que describan qué necesitan. Responde en máximo 2 oraciones. Sin markdown.`,
+              system: `Eres Pulpín 🐙 de AQUA, tienda de peces en Colombia. Analiza la imagen.
+Precios siempre en pesos colombianos (COP).
+Si es un pez enfermo o con síntomas: describe qué ves, diagnostica y recomienda el medicamento de nuestra tienda (White Spot $7.000-30.000 | Verde malaquita $5.000 | Furan Green $8.000 | Paraguard $12.000 | Azul metileno $2.000-3.000).
+Si es comprobante de pago o transferencia bancaria: responde SOLO la palabra COMPROBANTE.
+Si es acuario o peces sanos: haz un comentario positivo y pregunta si necesitan algo.
+Si no puedes determinar qué es: responde SOLO la palabra DESCRIPCION.
+Responde en máximo 2 oraciones naturales. Sin markdown.`,
               messages: [{ role: "user", content: [
                 { type: "image", source: { type: "base64", media_type: mime, data: b64 } },
-                { type: "text",  text: "¿Qué ves en esta imagen?" }
+                { type: "text",  text: "¿Qué hay en esta imagen?" }
               ]}]
             },
             { headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" } }
@@ -1305,6 +1351,7 @@ Si no está claro: pide que describan qué necesitan. Responde en máximo 2 orac
           const analisis = visionResp.data.content[0].text.trim();
 
           if (analisis === "COMPROBANTE") {
+            // Es un comprobante de pago
             if (!comprasConfirmadas[userNumber]) registrarCompra(userNumber);
             await axios.post(`${WHAPI_URL}/messages/text`,
               { to: userNumber, body: "Recibí tu comprobante 🐙 Ya le aviso al encargado para confirmar tu pedido. En unos minutos te contactan." },
@@ -1314,34 +1361,58 @@ Si no está claro: pide que describan qué necesitan. Responde en máximo 2 orac
             await notificarEquipo(userNumber, [...historial,
               { role: "user", content: "[Comprobante de pago recibido]" }
             ], ciudadActual);
+
+          } else if (analisis === "DESCRIPCION") {
+            // No se pudo identificar — pedir descripción
+            const msgDesc = "Recibí tu imagen 🐙 Para ayudarte mejor, ¿me puedes describir qué está pasando? Por ejemplo: ¿es un pez enfermo, un comprobante de pago, o algo que quieres comprar?";
+            await axios.post(`${WHAPI_URL}/messages/text`,
+              { to: userNumber, body: msgDesc },
+              { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+            );
+            if (!conversationMemory[userNumber]) conversationMemory[userNumber] = [];
+            conversationMemory[userNumber].push({ role: "user",      content: "[Cliente envió imagen]" });
+            conversationMemory[userNumber].push({ role: "assistant", content: msgDesc });
+
           } else {
-            // Responder con el diagnóstico visual
+            // Diagnóstico o comentario positivo — responder con el análisis
             await axios.post(`${WHAPI_URL}/messages/text`,
               { to: userNumber, body: analisis },
               { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
             );
             if (!conversationMemory[userNumber]) conversationMemory[userNumber] = [];
-            conversationMemory[userNumber].push({ role: "user", content: "[Cliente envió foto]" });
+            conversationMemory[userNumber].push({ role: "user",      content: "[Cliente envió foto de pez/acuario]" });
             conversationMemory[userNumber].push({ role: "assistant", content: analisis });
           }
-        } catch (err) {
-          console.error("❌ Error Vision:", err.response?.data || err.message);
-          // Fallback si falla Vision
-          await axios.post(`${WHAPI_URL}/messages/text`,
-            { to: userNumber, body: "Recibí tu imagen 🐙 ¿Puedes contarme qué está pasando con tu pez o qué necesitas?" },
-            { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-          );
+
+          console.log(`📷 Imagen analizada (${userNumber}): ${analisis.substring(0, 60)}`);
+          return;
+
+        } catch (errVision) {
+          console.error("⚠️ Vision falló, pidiendo descripción:", errVision.message);
+          // Si Vision falla por cualquier razón → pedir descripción al cliente
         }
-      } else {
-        // Vision desactivado: asumir comprobante
-        if (!comprasConfirmadas[userNumber]) registrarCompra(userNumber);
-        await axios.post(`${WHAPI_URL}/messages/text`,
-          { to: userNumber, body: "Recibí tu comprobante 🐙 Ya le aviso al encargado para confirmar tu pedido. En unos minutos te contactan." },
-          { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-        );
       }
+
+      // ── Fallback: no hay URL o Vision falló — pedir descripción ──
+      const msgFallback = `Recibí tu imagen 🐙 Para ayudarte mejor, por favor descríbeme qué hay en ella:
+
+• ¿Es un pez con algún problema? (Cuéntame los síntomas)
+• ¿Es un comprobante de pago?
+• ¿Es algo que quieres comprar o consultar?
+
+Así te ayudo más rápido 😊`;
+      await axios.post(`${WHAPI_URL}/messages/text`,
+        { to: userNumber, body: msgFallback },
+        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+      );
+      if (!conversationMemory[userNumber]) conversationMemory[userNumber] = [];
+      conversationMemory[userNumber].push({ role: "user",      content: "[Cliente envió imagen sin análisis]" });
+      conversationMemory[userNumber].push({ role: "assistant", content: msgFallback });
       return;
     }
+
+    // ── Detectar productos (debe estar antes del upsell y las imágenes) ──
+    const productosDetectados = detectarProductos(textoUnido);
 
     // ── MEJORA B: Upsell — inyectar sugerencia en el carrito context ──────────
     if (productosDetectados.length > 0) {
@@ -1349,7 +1420,6 @@ Si no está claro: pide que describan qué necesitan. Responde en máximo 2 orac
       const yaHayUpsellEnHistorial = (conversationMemory[userNumber] || [])
         .some(m => m.content && m.content.includes("UPSELL_SUGERIDO"));
       if (upsell && !yaHayUpsellEnHistorial) {
-        // Añadir instrucción invisible al siguiente mensaje del carrito
         if (!perfilUsuario[userNumber]) perfilUsuario[userNumber] = {};
         perfilUsuario[userNumber].upsellPendiente = upsell;
       }
@@ -1382,7 +1452,6 @@ Si no está claro: pide que describan qué necesitan. Responde en máximo 2 orac
     }
 
     // ── Enviar imágenes de productos detectados (máximo 2) ──
-    const productosDetectados = detectarProductos(textoUnido);
     for (const clave of productosDetectados.slice(0, 2)) {
       await enviarImagenProducto(userNumber, clave);
     }
@@ -1609,7 +1678,7 @@ app.post("/webhook", async (req, res) => {
     if (pendingTimers[userNumber]) clearTimeout(pendingTimers[userNumber]);
     // Imágenes se procesan más rápido (no hay que esperar más texto)
     const delay = esImagen ? 1500 : DELAY_MS;
-    pendingTimers[userNumber] = setTimeout(() => procesarMensajes(userNumber, tipoMensaje), delay);
+    pendingTimers[userNumber] = setTimeout(() => procesarMensajes(userNumber, tipoMensaje, message), delay);
 
     res.sendStatus(200);
   } catch (error) {
@@ -1854,6 +1923,6 @@ app.get("/estado", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🐙 Pulpín v6 corriendo en puerto ${PORT}`);
+  console.log(`🐙 Pulpín v8 corriendo en puerto ${PORT}`);
   console.log(`📊 Panel web: http://localhost:${PORT}/panel?pass=${PANEL_PASSWORD}`);
 });
