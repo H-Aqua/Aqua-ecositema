@@ -22,9 +22,9 @@ const WHAPI_URL         = "https://gate.whapi.cloud";
 // La consigues en: Loyverse → Ajustes → API de Acceso
 const LOYVERSE_API_KEY  = process.env.LOYVERSE_API_KEY || null;
 
-const NUMERO_KENETH     = "573003808708";
-const NUMERO_PEREIRA    = "573157260804";
-const NUMERO_ASESOR     = "573137200415"; // ← recibe los reportes de inventario
+const NUMERO_ADMIN      = "573137200415"; // ← Administrador principal
+const NUMERO_KENETH     = "573003808708"; // ← Colaborador Toro
+const NUMERO_PEREIRA    = "573157260804"; // ← Sede Pereira
 
 // Archivo donde se guarda el registro de demanda (persistente entre reinicios)
 const ARCHIVO_DEMANDA   = path.join(__dirname, "datos_demanda.json");
@@ -226,25 +226,14 @@ Máximo 25 líneas en total. Sin markdown excesivo. En español directo.`;
     const reporte = resp.data.content[0].text;
     const mensaje = `📦 Reporte Inventario AQUA\n${new Date().toLocaleDateString("es-CO")}\n\n${reporte}`;
 
-    // Enviar a Keneth (Toro)
-    await axios.post(`${WHAPI_URL}/messages/text`,
-      { to: `${NUMERO_KENETH}@s.whatsapp.net`, body: mensaje },
-      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-    );
-
-    // Enviar a Pereira también
-    await axios.post(`${WHAPI_URL}/messages/text`,
-      { to: `${NUMERO_PEREIRA}@s.whatsapp.net`, body: mensaje },
-      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-    );
-
-    // Enviar al asesor (3137200415)
-    await axios.post(`${WHAPI_URL}/messages/text`,
-      { to: `${NUMERO_ASESOR}@s.whatsapp.net`, body: mensaje },
-      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-    );
-
-    console.log("✅ Reporte enviado al equipo y al asesor");
+    // Enviar a: Admin principal, Keneth (Toro) y Pereira
+    for (const num of [NUMERO_ADMIN, NUMERO_KENETH, NUMERO_PEREIRA]) {
+      await axios.post(`${WHAPI_URL}/messages/text`,
+        { to: `${num}@s.whatsapp.net`, body: mensaje },
+        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+      );
+    }
+    console.log("✅ Reporte inventario enviado al equipo completo");
   } catch (err) {
     console.error("❌ Error generando reporte:", err.response?.data || err.message);
   }
