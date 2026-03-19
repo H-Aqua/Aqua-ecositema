@@ -116,25 +116,32 @@ async function obtenerStockLoyverse(nombreProducto) {
 async function generarReporte() {
   console.log("📊 Generando reporte de inventario...");
 
-  // Top 10 más consultados esta semana
+  // Análisis de los últimos 15 días
   const ahora    = new Date();
-  const hace7    = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const diasSemana = [];
-  for (let d = new Date(hace7); d <= ahora; d.setDate(d.getDate() + 1)) {
-    diasSemana.push(d.toISOString().slice(0, 10));
+  const hace15   = new Date(ahora.getTime() - 15 * 24 * 60 * 60 * 1000);
+  const dias15   = [];
+  for (let d = new Date(hace15); d <= ahora; d.setDate(d.getDate() + 1)) {
+    dias15.push(d.toISOString().slice(0, 10));
   }
 
   const consultasSemana = {};
   for (const [prod, datos] of Object.entries(demanda.productos)) {
-    const total = diasSemana.reduce((s, dia) => s + (datos.dias[dia] || 0), 0);
+    const total = dias15.reduce((s, dia) => s + (datos.dias[dia] || 0), 0);
     if (total > 0) consultasSemana[prod] = total;
   }
 
   const sinStockSemana = {};
   for (const [prod, datos] of Object.entries(demanda.sinStock)) {
-    const total = diasSemana.reduce((s, dia) => s + (datos.dias[dia] || 0), 0);
+    const total = dias15.reduce((s, dia) => s + (datos.dias[dia] || 0), 0);
     if (total > 0) sinStockSemana[prod] = total;
   }
+
+  // Productos sin ninguna consulta en 15 días (sin rotación)
+  const todosProductos = Object.keys(demanda.productos);
+  const sinRotacion15 = todosProductos.filter(prod => {
+    const total = dias15.reduce((s, dia) => s + (demanda.productos[prod].dias[dia] || 0), 0);
+    return total === 0 && demanda.productos[prod].total > 0; // que antes sí se consultaba
+  }).slice(0, 5);
 
   const topConsultas = Object.entries(consultasSemana)
     .sort(([,a],[,b]) => b - a).slice(0, 10)
@@ -161,15 +168,31 @@ async function generarReporte() {
   }
 
   // Generar análisis con Claude
+  // Consultar muertes al bot
+  let datosMuertes = "";
+  try {
+    const mResp = await axios.get(`${process.env.BOT_URL || "http://localhost:3000"}/muertes`, { timeout: 3000 });
+    const m = mResp.data;
+    if (m.total > 0) {
+      datosMuertes = `\nMUERTES REGISTRADAS (últimos 15 días): ${m.total} animales | Costo total: $${(m.costoTotal||0).toLocaleString("es-CO")}`;
+      const porEspecie = {};
+      m.muertes.forEach(x => { porEspecie[x.especie] = (porEspecie[x.especie]||0)+1; });
+      datosMuertes += "\n" + Object.entries(porEspecie).map(([e,n]) => `  ${e}: ${n} muertes`).join("\n");
+    }
+  } catch(e) {}
+
   const prompt = `Eres el asistente de inventario de AQUA, tienda de peces ornamentales en Colombia (Toro Valle y Pereira Risaralda).
 
-DATOS DE LA SEMANA:
+DATOS DE LOS ÚLTIMOS 15 DÍAS:
 Productos más consultados:
 ${topConsultas}
 
 Productos que pidieron y no había (demanda insatisfecha):
 ${topSinStock || "Ninguno registrado"}
-${stockInfo}
+${stockInfo}${datosMuertes}
+
+Productos SIN ROTACIÓN en 15 días (sin ninguna consulta):
+${sinRotacion15.length > 0 ? sinRotacion15.join(", ") : "Todos han tenido movimiento"}
 
 Genera un reporte para el equipo con estas 5 secciones:
 
@@ -181,9 +204,13 @@ Genera un reporte para el equipo con estas 5 secciones:
 
 4. BÚSQUEDA DE PROVEEDORES: Para los 2 productos con más demanda sin stock, sugiere dónde buscar mejor precio en Colombia (distribuidoras de Bogotá, Medellín, o Cali que suelen tener peces ornamentales al por mayor como Acuarios El Dorado, Tropical Fish Colombia, o similares reconocidos en el sector).
 
-5. ACCIÓN DE LA SEMANA: Una sola recomendación concreta de compra para hacer esta semana.
+5. PRODUCTOS SIN ROTACIÓN (alerta promo): Lista los productos sin movimiento en 15 días con una acción concreta (hacer promo, bajar precio, usar en estado de WhatsApp esta semana).
 
-Máximo 20 líneas en total. Sin markdown excesivo. En español directo.`;
+6. ACCIÓN DE LA SEMANA: Una sola recomendación concreta de compra para hacer esta semana.
+
+7. ALERTA ANIMALES (si hay muertes): Si hubo muertes, indica el costo total incurrido y si hay un patrón repetido que sugiera un problema de salud o proveedor.
+
+Máximo 25 líneas en total. Sin markdown excesivo. En español directo.`;
 
   try {
     const resp = await axios.post(
