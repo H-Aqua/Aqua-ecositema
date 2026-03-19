@@ -16,8 +16,9 @@ app.use(express.json());
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const WHAPI_TOKEN       = "0p72NednwTdDtZgW42pZw2TPWqjGWGuL";
 const WHAPI_URL         = "https://gate.whapi.cloud";
-const NUMERO_ADMIN      = "573003808708";
-const NUMERO_ASESOR     = "573137200415"; // ← recibe el análisis nocturno
+const NUMERO_ADMIN      = "573137200415"; // ← Administrador principal
+const NUMERO_KENETH     = "573003808708"; // ← Colaborador Toro
+const NUMERO_PEREIRA    = "573157260804"; // ← Sede Pereira
 
 // Archivo de estado de Pulpín (lo escribe el bot cada 5 min)
 const ARCHIVO_ESTADO    = path.join(__dirname, "estado_pulpin.json");
@@ -161,17 +162,13 @@ Precios siempre en pesos colombianos ($17.000 no $17k). Sé directo y específic
     const fecha    = new Date().toLocaleDateString("es-CO", { timeZone: "America/Bogota", weekday:"long", day:"numeric", month:"long" });
     const mensaje  = `🔍 *Análisis Nocturno AQUA*\n_${fecha}_\n\n${analisis}`;
 
-    // Enviar al admin (Keneth)
-    await axios.post(`${WHAPI_URL}/messages/text`,
-      { to: `${NUMERO_ADMIN}@s.whatsapp.net`, body: mensaje },
-      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-    );
-
-    // Enviar al asesor (3137200415)
-    await axios.post(`${WHAPI_URL}/messages/text`,
-      { to: `${NUMERO_ASESOR}@s.whatsapp.net`, body: mensaje },
-      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-    );
+    // Enviar a: Admin principal, Keneth (Toro) y Pereira
+    for (const num of [NUMERO_ADMIN, NUMERO_KENETH, NUMERO_PEREIRA]) {
+      await axios.post(`${WHAPI_URL}/messages/text`,
+        { to: `${num}@s.whatsapp.net`, body: mensaje },
+        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+      );
+    }
 
     // Detectar patrones de muertes repetidas en la semana
     try {
@@ -185,6 +182,8 @@ Precios siempre en pesos colombianos ($17.000 no $17k). Sé directo y específic
           const alertaPatron = `⚠️ ALERTA AQUA: Se detectó causa "${causaRepetida[0]}" en ${causaRepetida[1]} muertes esta semana. Revisar urgente condiciones del criadero o lote de proveedor.`;
           await axios.post(`${WHAPI_URL}/messages/text`,
             { to: `${NUMERO_ADMIN}@s.whatsapp.net`, body: alertaPatron },
+            // También a Keneth
+            { to: `${NUMERO_KENETH}@s.whatsapp.net`, body: alertaPatron },
             { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
           );
           console.log("⚠️ Alerta patrón muertes enviada");
@@ -232,6 +231,73 @@ app.post("/analisis/generar", async (req, res) => {
 app.get("/analisis/historial", (req, res) => {
   const h = cargarHistorialAnalisis();
   res.json(h.analisis.slice(0, 7)); // últimos 7 días
+});
+
+// ─── SECCIÓN: MEJORAS A PULPÍN BASADAS EN ANÁLISIS ──────────────────────────
+// POST /analisis/mejoras → recibe un análisis nocturno y genera mejoras concretas para Pulpín
+// Uso: mandar el texto del análisis y recibe las mejoras aplicables al chatbot
+app.post("/analisis/mejoras", async (req, res) => {
+  const { analisis } = req.body;
+  if (!analisis) return res.status(400).json({ error: "Falta el texto del análisis" });
+
+  try {
+    const resp = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        system: `Eres el optimizador del chatbot Pulpín de AQUA, tienda de peces en Colombia.
+Recibes el análisis nocturno de conversaciones y debes extraer MEJORAS CONCRETAS y ACCIONABLES para el chatbot.
+Responde en este formato exacto:
+
+MEJORAS PARA PULPÍN:
+1. [FRASES]: Lista palabras clave nuevas que Pulpín debería detectar (que no detectó hoy)
+2. [RESPUESTAS]: Situaciones donde respondió mal + cómo debería responder mejor (texto exacto)
+3. [PRODUCTOS]: Productos que preguntaron y Pulpín no tenía en catálogo
+4. [UPSELLS]: Nuevas combinaciones de upsell que se detectaron en las conversaciones
+5. [PRIORIDAD]: La mejora más urgente de implementar esta semana
+
+Sé muy específico. Si no hay suficiente info en algún punto, escribe "Sin datos suficientes".`,
+        messages: [{ role: "user", content: `Análisis nocturno a procesar:
+
+${analisis}` }]
+      },
+      { headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" } }
+    );
+
+    const mejoras = resp.data.content[0].text;
+
+    // Guardar el análisis con las mejoras
+    const historial = cargarHistorialAnalisis();
+    if (!historial.mejoras) historial.mejoras = [];
+    historial.mejoras.unshift({
+      fecha: new Date().toISOString(),
+      analisisOriginal: analisis.substring(0, 500),
+      mejoras
+    });
+    historial.mejoras = historial.mejoras.slice(0, 30);
+    fs.writeFileSync(ARCHIVO_ANALISIS, JSON.stringify(historial, null, 2));
+
+    // Enviar mejoras al admin
+    const msgMejoras = `🔧 *Mejoras para Pulpín*
+_${new Date().toLocaleDateString("es-CO")}_
+
+${mejoras}`;
+    await axios.post(`${WHAPI_URL}/messages/text`,
+      { to: `${NUMERO_ADMIN}@s.whatsapp.net`, body: msgMejoras },
+      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+    );
+
+    res.json({ ok: true, mejoras });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /analisis/mejoras → ver historial de mejoras generadas
+app.get("/analisis/mejoras", (req, res) => {
+  const h = cargarHistorialAnalisis();
+  res.json((h.mejoras || []).slice(0, 10));
 });
 
 const PORT = process.env.PORT_ANALISIS || 3004;
