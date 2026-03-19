@@ -1,4 +1,3 @@
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // 🐙 AGENTE ANALISTA NOCTURNO — AQUA
 // Cada noche a las 10pm lee las conversaciones del día,
@@ -24,6 +23,8 @@ const NUMERO_ASESOR     = "573137200415"; // ← recibe el análisis nocturno
 const ARCHIVO_ESTADO    = path.join(__dirname, "estado_pulpin.json");
 // Archivo donde guardamos el historial de análisis previos
 const ARCHIVO_ANALISIS  = path.join(__dirname, "historial_analisis.json");
+// URL del bot para consultar muertes
+const BOT_URL           = process.env.BOT_URL || "http://localhost:3000";
 
 // 10pm Colombia = 3am UTC del día siguiente
 const HORA_ANALISIS_UTC = 3;
@@ -93,6 +94,25 @@ async function generarAnalisisNocturno() {
 
   const convTexto = datos.resumenConvs.join("\n\n");
 
+  // Consultar muertes registradas hoy
+  let datosMuertesHoy = "";
+  try {
+    const mResp = await axios.get(`${BOT_URL}/muertes`, { timeout: 3000 });
+    const m = mResp.data;
+    if (m.total > 0) {
+      const hoy = new Date().toISOString().slice(0, 10);
+      const muertesHoy = m.muertes.filter(x => x.fecha.startsWith(hoy));
+      if (muertesHoy.length > 0) {
+        datosMuertesHoy = `\n\nMUERTES REGISTRADAS HOY (${muertesHoy.length}):`;
+        muertesHoy.forEach(x => {
+          datosMuertesHoy += `\n- ${x.especie} | ${x.causa} | $${(x.costo||0).toLocaleString("es-CO")} | Sede: ${x.sede}`;
+        });
+        const costoHoy = muertesHoy.reduce((s, x) => s + (x.costo||0), 0);
+        datosMuertesHoy += `\nCosto total muertes hoy: $${costoHoy.toLocaleString("es-CO")}`;
+      }
+    }
+  } catch(e) {}
+
   const prompt = `Eres el analista de ventas y calidad de AQUA, tienda de peces ornamentales en Colombia (Toro Valle y Pereira Risaralda).
 
 DATOS DEL DÍA:
@@ -101,9 +121,9 @@ DATOS DEL DÍA:
 - Tasa de conversión: ${datos.totalChats > 0 ? Math.round((datos.totalCompras/datos.totalChats)*100) : 0}%
 
 CONVERSACIONES DE HOY:
-${convTexto}
+${convTexto}${datosMuertesHoy}
 
-Analiza estas conversaciones y genera el reporte nocturno con estas 7 secciones:
+Analiza y genera el reporte nocturno con estas 8 secciones:
 
 1. RESUMEN DEL DÍA (2 líneas): tasa de conversión, productos más pedidos, ciudad con más actividad
 
@@ -121,6 +141,8 @@ Analiza estas conversaciones y genera el reporte nocturno con estas 7 secciones:
 6. PRODUCTO ESTRELLA MAÑANA: El que más interés generó hoy. Sugiere el caption exacto para el estado de mañana y el horario ideal.
 
 7. ALERTA (si aplica): Algo urgente que el equipo debe saber hoy mismo (queja seria, producto muy pedido sin stock, cliente molesto, etc.)
+
+8. REPORTE DE MUERTES (si las hubo hoy): Costo total incurrido, especie con más muertes, causa más frecuente, y si hay un patrón repetido que indique problema de salud, proveedor o manejo. Sugerir acción correctiva concreta.
 
 Precios siempre en pesos colombianos ($17.000 no $17k). Sé directo y específico. Sin flores. Máximo 35 líneas. En español colombiano natural.`;
 
@@ -150,6 +172,25 @@ Precios siempre en pesos colombianos ($17.000 no $17k). Sé directo y específic
       { to: `${NUMERO_ASESOR}@s.whatsapp.net`, body: mensaje },
       { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
     );
+
+    // Detectar patrones de muertes repetidas en la semana
+    try {
+      const mResp = await axios.get(`${BOT_URL}/muertes`, { timeout: 3000 });
+      const m = mResp.data;
+      if (m.total >= 3) {
+        const porCausa = {};
+        m.muertes.forEach(x => { porCausa[x.causa] = (porCausa[x.causa]||0)+1; });
+        const causaRepetida = Object.entries(porCausa).sort(([,a],[,b]) => b-a)[0];
+        if (causaRepetida && causaRepetida[1] >= 3) {
+          const alertaPatron = `⚠️ ALERTA AQUA: Se detectó causa "${causaRepetida[0]}" en ${causaRepetida[1]} muertes esta semana. Revisar urgente condiciones del criadero o lote de proveedor.`;
+          await axios.post(`${WHAPI_URL}/messages/text`,
+            { to: `${NUMERO_ADMIN}@s.whatsapp.net`, body: alertaPatron },
+            { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+          );
+          console.log("⚠️ Alerta patrón muertes enviada");
+        }
+      }
+    } catch(e) {}
 
     // Guardar en historial local
     guardarAnalisis({ totalChats: datos.totalChats, totalCompras: datos.totalCompras, analisis });
