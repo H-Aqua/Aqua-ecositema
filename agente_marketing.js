@@ -19,11 +19,19 @@ const WHAPI_TOKEN       = "0p72NednwTdDtZgW42pZw2TPWqjGWGuL";
 const WHAPI_URL         = "https://gate.whapi.cloud";
 
 const NUMERO_ADMIN      = "573003808708"; // Keneth recibe el plan
+const NUMERO_PEREIRA    = "573157260804"; // Pereira recibe el plan
 const NUMERO_ASESOR     = "573137200415"; // también recibe el plan de marketing
-const INVENTARIO_URL    = process.env.INVENTARIO_URL || "http://localhost:3002"; // URL del agente de inventario
+const INVENTARIO_URL    = process.env.INVENTARIO_URL || "http://localhost:3002";
+const BOT_URL           = process.env.BOT_URL || "http://localhost:3000";
 
 // Lunes a las 7am Colombia (12 UTC)
 const HORA_REPORTE_UTC  = 12;
+// Motivación diaria: 8am Colombia (13 UTC) todos los días
+const HORA_MOTIVACION_UTC = 13;
+
+// Meta mínima de ventas diaria por sede (en pesos)
+const META_DIARIA_TORO    = 150000;  // $150.000 mínimo diario Toro
+const META_DIARIA_PEREIRA = 200000;  // $200.000 mínimo diario Pereira
 
 // ─── FESTIVIDADES COLOMBIANAS 2026 ────────────────────────────────────────────
 // Fechas fijas + fechas móviles calculadas
@@ -192,8 +200,71 @@ Máximo 30 líneas. Directo y accionable.`;
   }
 }
 
+// ─── MOTIVACIÓN DIARIA — 8am Colombia todos los días ────────────────────────
+async function enviarMotivacionDiaria() {
+  console.log("🔥 Generando mensaje de motivación diaria...");
+
+  // Obtener datos de inventario y muertes para contexto
+  let contextoVentas = "";
+  let datosMuertes = "";
+  try {
+    const inv = await axios.get(`${INVENTARIO_URL}/inventario/stats`, { timeout: 4000 });
+    const top3 = inv.data.topProductos?.slice(0, 3).map(p => p.producto).join(", ");
+    if (top3) contextoVentas = `Productos más pedidos recientemente: ${top3}`;
+  } catch(e) {}
+  try {
+    const m = await axios.get(`${BOT_URL}/muertes`, { timeout: 3000 });
+    if (m.data.total > 0) datosMuertes = `\nAlerta: ${m.data.total} muertes registradas esta semana — costo $${(m.data.costoTotal||0).toLocaleString("es-CO")}`;
+  } catch(e) {}
+
+  const diasSemana = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+  const hoy = diasSemana[new Date().getDay()];
+  const fecha = new Date().toLocaleDateString("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long" });
+
+  const prompt = `Eres el coach de ventas de AQUA, tienda de peces ornamentales en Colombia. 
+Genera un mensaje de motivación matutino para el equipo que abre la tienda hoy (${fecha}).
+
+Contexto: ${contextoVentas || "inicio de día normal"}${datosMuertes}
+Meta mínima hoy: Toro $${META_DIARIA_TORO.toLocaleString("es-CO")} | Pereira $${META_DIARIA_PEREIRA.toLocaleString("es-CO")}
+
+El mensaje debe:
+1. Saludar con energía positiva y el día de hoy
+2. Dar 1 dato curioso o tip de ventas concreto (sobre el producto estrella del momento)
+3. Mencionar la meta del día de forma motivante, no presionante
+4. Sugerir UNA acción concreta para vender más hoy (ej: "si alguien pregunta por guppys, ofrécele también el tetracolor")
+5. Terminar con una frase motivadora corta y colombiana
+
+Máximo 8 líneas. Sin markdown. Natural y cálido. En español colombiano.`;
+
+  try {
+    const resp = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      { model: "claude-haiku-4-5-20251001", max_tokens: 250, messages: [{ role: "user", content: prompt }] },
+      { headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" } }
+    );
+
+    const motivacion = resp.data.content[0].text;
+    const mensaje = `🔥 Buenos días equipo AQUA!
+${fecha}
+
+${motivacion}`;
+
+    // Enviar a Keneth (Toro), Pereira y Asesor
+    for (const num of [NUMERO_ADMIN, NUMERO_PEREIRA, NUMERO_ASESOR]) {
+      await axios.post(`${WHAPI_URL}/messages/text`,
+        { to: `${num}@s.whatsapp.net`, body: mensaje },
+        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+      );
+    }
+    console.log("✅ Motivación diaria enviada al equipo");
+  } catch(err) {
+    console.error("❌ Error generando motivación:", err.response?.data || err.message);
+  }
+}
+
 // ─── CRON: lunes a las 7am Colombia ──────────────────────────────────────────
 let ultimoMarketingClave = null;
+let ultimaMotivacionClave = null;
 
 setInterval(() => {
   const ahora = new Date();
@@ -204,6 +275,12 @@ setInterval(() => {
   if (dia === 1 && hora === HORA_REPORTE_UTC && ultimoMarketingClave !== clave) {
     ultimoMarketingClave = clave;
     generarPlanMarketing().catch(console.error);
+  }
+
+  // Motivación diaria a las 8am Colombia (13 UTC) todos los días
+  if (hora === HORA_MOTIVACION_UTC && ultimaMotivacionClave !== clave) {
+    ultimaMotivacionClave = clave;
+    enviarMotivacionDiaria().catch(console.error);
   }
 }, 5 * 60 * 1000);
 
@@ -216,6 +293,16 @@ app.post("/marketing/generar", async (req, res) => {
   res.json({ ok: !!plan, plan });
 });
 
+// POST /marketing/motivar → envía motivación ahora mismo
+app.post("/marketing/motivar", async (req, res) => {
+  try {
+    await enviarMotivacionDiaria();
+    res.json({ ok: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /marketing/festividades → ver qué festividades vienen
 app.get("/marketing/festividades", (req, res) => {
   const proximas = getFestividadesProximas(30);
@@ -224,6 +311,7 @@ app.get("/marketing/festividades", (req, res) => {
 
 const PORT = process.env.PORT_MARKETING || 3003;
 app.listen(PORT, () => {
-  console.log(`🐙 Agente Marketing corriendo en puerto ${PORT}`);
+  console.log(`🐙 Agente Marketing+Ventas corriendo en puerto ${PORT}`);
   console.log(`📅 Plan semanal: lunes 7am Colombia`);
+  console.log(`🔥 Motivación diaria: todos los días 8am Colombia`);
 });
