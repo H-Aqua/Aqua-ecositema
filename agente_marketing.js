@@ -18,9 +18,13 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const WHAPI_TOKEN       = "0p72NednwTdDtZgW42pZw2TPWqjGWGuL";
 const WHAPI_URL         = "https://gate.whapi.cloud";
 
-const NUMERO_ADMIN      = "573003808708"; // Keneth recibe el plan
-const NUMERO_PEREIRA    = "573157260804"; // Pereira recibe el plan
-const NUMERO_ASESOR     = "573137200415"; // también recibe el plan de marketing
+const NUMERO_ADMIN      = "573137200415"; // ← Administrador principal
+const NUMERO_KENETH     = "573003808708"; // ← Colaborador Toro
+const NUMERO_PEREIRA    = "573157260804"; // ← Sede Pereira
+
+// Colaboradores que reciben motivación diaria (igual que en bot_pulpin_v8.js)
+const COLABORADORES_TORO    = ["573003808708"]; // Keneth
+const COLABORADORES_PEREIRA = []; // agregar aquí
 const INVENTARIO_URL    = process.env.INVENTARIO_URL || "http://localhost:3002";
 const BOT_URL           = process.env.BOT_URL || "http://localhost:3000";
 
@@ -181,18 +185,14 @@ Máximo 30 líneas. Directo y accionable.`;
     const plan    = resp.data.content[0].text;
     const mensaje = `🎯 Plan Marketing AQUA — Semana del ${semana}\n\n${plan}`;
 
-    await axios.post(`${WHAPI_URL}/messages/text`,
-      { to: `${NUMERO_ADMIN}@s.whatsapp.net`, body: mensaje },
-      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-    );
-
-    // Enviar también al asesor
-    await axios.post(`${WHAPI_URL}/messages/text`,
-      { to: `${NUMERO_ASESOR}@s.whatsapp.net`, body: mensaje },
-      { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-    );
-
-    console.log("✅ Plan de marketing enviado al equipo y al asesor");
+    // Enviar plan a: Admin, Keneth y Pereira
+    for (const num of [NUMERO_ADMIN, NUMERO_KENETH, NUMERO_PEREIRA]) {
+      await axios.post(`${WHAPI_URL}/messages/text`,
+        { to: `${num}@s.whatsapp.net`, body: mensaje },
+        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+      );
+    }
+    console.log("✅ Plan de marketing enviado al equipo completo");
     return plan;
   } catch (err) {
     console.error("❌ Error generando plan:", err.response?.data || err.message);
@@ -249,14 +249,21 @@ ${fecha}
 
 ${motivacion}`;
 
-    // Enviar a Keneth (Toro), Pereira y Asesor
-    for (const num of [NUMERO_ADMIN, NUMERO_PEREIRA, NUMERO_ASESOR]) {
-      await axios.post(`${WHAPI_URL}/messages/text`,
-        { to: `${num}@s.whatsapp.net`, body: mensaje },
-        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-      );
+    // Enviar motivación a: Admin + todos los colaboradores de ambas sedes
+    const destinatariosMotivacion = [
+      NUMERO_ADMIN,
+      ...COLABORADORES_TORO,
+      ...COLABORADORES_PEREIRA,
+    ];
+    for (const num of [...new Set(destinatariosMotivacion)]) {
+      try {
+        await axios.post(`${WHAPI_URL}/messages/text`,
+          { to: `${num}@s.whatsapp.net`, body: mensaje },
+          { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+        );
+      } catch(e) { console.error(`⚠️ Error enviando motivación a ${num}:`, e.message); }
     }
-    console.log("✅ Motivación diaria enviada al equipo");
+    console.log(`✅ Motivación diaria enviada a ${destinatariosMotivacion.length} personas`);
   } catch(err) {
     console.error("❌ Error generando motivación:", err.response?.data || err.message);
   }
