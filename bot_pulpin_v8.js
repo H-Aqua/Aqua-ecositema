@@ -56,11 +56,13 @@ const GRUPOS_MODO = "permitidos"; // ← configurado: solo "Personal Aqua"
 // el log mostrará: 🔍 Grupo desconocido: 120363XXXXXXXX@g.us — "Personal Aqua"
 // Copia ese ID y pégalo aquí abajo, o deja vacío y Pulpín filtrará por nombre.
 const GRUPOS_PERMITIDOS = [
-  // "120363XXXXXXXX@g.us",  // ← pega aquí el ID de "Personal Aqua" cuando lo veas en logs
+  // "120363XXXXXXXX@g.us",  // ← pega aquí el ID de "DF Pereira" cuando lo veas en logs
+  // "120363YYYYYYYY@g.us",  // ← pega aquí el ID de "Dead Fish (DF)" cuando lo veas en logs
 ];
 
-// Pulpín también acepta el grupo por su nombre exacto (plan B mientras consigues el ID)
-const NOMBRE_GRUPO_PERMITIDO = "Personal Aqua";
+// Pulpín acepta estos grupos por nombre (plan B mientras consigues los IDs)
+// DF = grupo Pereira | Dead Fish (DF) = grupo Toro — solo para registro de muertes
+const NOMBRES_GRUPOS_PERMITIDOS = ["DF", "Dead Fish (DF)", "dead fish (df)", "dead fish", "Personal Aqua"];
 
 // ── ETIQUETAS BLOQUEADAS ─────────────────────────────────────────────────────
 // Pulpín NO responde a contactos con estas etiquetas de WhatsApp Business
@@ -76,8 +78,21 @@ const ETIQUETA_MAYORISTA = "clientes por mayor"; // ← ajusta si tu etiqueta se
 
 // Número que tiene autorización para disparar el envío masivo
 // Envía "enviar mayoristas" a tu propio número de WhatsApp Business
-const NUMERO_ADMIN   = "573003808708"; // ← pon tu número sin + ni espacios
-const NUMERO_ASESOR  = "573137200415"; // ← número que recibe alertas de clientes que piden asesor
+// ── ADMINISTRADOR PRINCIPAL ──────────────────────────────────────────────────
+const NUMERO_ADMIN   = "573137200415"; // ← Administrador principal — tiene todos los comandos
+
+// ── COLABORADORES TORO ────────────────────────────────────────────────────────
+// Reciben: motivación diaria, plan marketing, seguimiento clientes que iban a ir a la tienda
+const COLABORADORES_TORO = [
+  "573003808708", // Keneth
+  // "57XXXXXXXXXX", // ← agregar más colaboradores Toro aquí
+];
+
+// ── COLABORADORES PEREIRA ─────────────────────────────────────────────────────
+// Reciben: motivación diaria, plan marketing, seguimiento clientes Pereira
+const COLABORADORES_PEREIRA = [
+  // "57XXXXXXXXXX", // ← agregar colaboradores Pereira aquí
+];
 
 // ── CATÁLOGO PDF / IMÁGENES / VIDEO PARA MAYORISTAS ─────────────────────────
 // Sube tu catálogo PDF a Google Drive → Compartir → "Cualquiera con el enlace"
@@ -158,8 +173,8 @@ const PAUSA_DURACION_MS  = 30 * 60 * 1000;
 const DIAS_SEGUIMIENTO   = 3;    // días después de compra para el seguimiento
 
 // Números del equipo AQUA (para notificaciones internas)
-const NUMERO_KENETH_TORO    = "573003808708"; // Toro - Keneth
-const NUMERO_PEREIRA        = "573157260804"; // Pereira
+const NUMERO_KENETH_TORO    = "573003808708"; // Toro - Keneth (colaborador)
+const NUMERO_PEREIRA        = "573157260804"; // Pereira (sede)
 
 // ── MÉTODOS DE PAGO ──────────────────────────────────────────────────────────
 // Imagen de métodos de pago (sube a Drive y pega el ID aquí)
@@ -1111,7 +1126,8 @@ function debeIgnorarGrupo(chatId, groupName) {
 
   // modo "permitidos": acepta por ID exacto O por nombre del grupo
   const aceptadoPorId     = GRUPOS_PERMITIDOS.includes(chatId);
-  const aceptadoPorNombre = groupName && groupName.trim() === NOMBRE_GRUPO_PERMITIDO;
+  const nombreLower       = (groupName || "").trim().toLowerCase();
+  const aceptadoPorNombre = NOMBRES_GRUPOS_PERMITIDOS.some(n => n.toLowerCase() === nombreLower);
 
   if (!aceptadoPorId && !aceptadoPorNombre) {
     // Log útil para conseguir el ID la primera vez
@@ -1233,9 +1249,16 @@ function detectarCiudad(texto) {
 
 // ─── NOTIFICACIÓN ENRUTADA POR CIUDAD ────────────────────────────────────────
 async function notificarEquipo(userNumber, historial, ciudad) {
-  const dest = ciudad === "pereira"
-    ? `${NUMERO_PEREIRA}@s.whatsapp.net`
-    : `${NUMERO_KENETH_TORO}@s.whatsapp.net`; // default → Toro/Keneth
+  // Notificar al admin principal siempre
+  const destinos = [`${NUMERO_ADMIN}@s.whatsapp.net`];
+  // Agregar colaboradores según ciudad
+  if (ciudad === "pereira") {
+    COLABORADORES_PEREIRA.forEach(n => destinos.push(`${n}@s.whatsapp.net`));
+    destinos.push(`${NUMERO_PEREIRA}@s.whatsapp.net`);
+  } else {
+    COLABORADORES_TORO.forEach(n => destinos.push(`${n}@s.whatsapp.net`));
+  }
+  const dest = destinos[0]; // para compatibilidad con código existente
 
   const ciudadTag = ciudad ? ` (${ciudad.toUpperCase()})` : "";
   const carrito   = carritoUsuario[userNumber] || [];
@@ -1247,11 +1270,15 @@ async function notificarEquipo(userNumber, historial, ciudad) {
     .map(m => `${m.role === "user" ? "Cliente" : "Pulpín"}: ${m.content}`)
     .join("\n");
 
-  await axios.post(
-    `${WHAPI_URL}/messages/text`,
-    { to: dest, body: `🐙 Pulpín${ciudadTag}\nCliente: ${userNumber}${carritoResumen}\n\n${resumen}` },
-    { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
-  );
+  const cuerpo = `🐙 Pulpín${ciudadTag}\nCliente: ${userNumber}${carritoResumen}\n\n${resumen}`;
+  for (const destinatario of [...new Set(destinos)]) {
+    try {
+      await axios.post(`${WHAPI_URL}/messages/text`,
+        { to: destinatario, body: cuerpo },
+        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+      );
+    } catch(e) { console.error(`⚠️ Error notificando ${destinatario}:`, e.message); }
+  }
 }
 
 // ─── REGISTRAR COMPRA CONFIRMADA ──────────────────────────────────────────────
@@ -1340,6 +1367,26 @@ ${ultimosMensajes || "Sin historial previo"}
 
     // ── Manejo de imágenes ────────────────────────────────────────────────────
     if (tipoMensaje === "image") {
+
+      // Si mandaron imagen sin ningún texto/caption → pedir descripción primero
+      const captionImagen = message.image?.caption || message.text?.body || "";
+      if (!captionImagen.trim()) {
+        const msgPedirInfo = `Recibí tu imagen 🐙 Para ayudarte mejor, ¿me describes qué hay en ella?
+
+• 🐟 ¿Es un pez o animal con síntomas? → dime qué observas
+• 🧾 ¿Es un comprobante de pago? → dilo y lo confirmo
+• 🛒 ¿Es algo que quieres comprar? → cuéntame cuál producto
+
+Con esa info te respondo al instante 😊`;
+        await axios.post(`${WHAPI_URL}/messages/text`,
+          { to: userNumber, body: msgPedirInfo },
+          { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+        );
+        if (!conversationMemory[userNumber]) conversationMemory[userNumber] = [];
+        conversationMemory[userNumber].push({ role: "user", content: "[Cliente envió imagen sin descripción]" });
+        conversationMemory[userNumber].push({ role: "assistant", content: msgPedirInfo });
+        return res.sendStatus(200);
+      }
 
       // ── Intentar analizar con Claude Vision (si hay URL disponible) ──
       const imgUrl = message.image?.link || message.photo?.link || null;
@@ -1528,6 +1575,17 @@ Así te ayudo más rápido 😊`;
       { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
     );
 
+    // ── Detectar si el cliente menciona que va a ir a la tienda ──
+    if (mencionaIrTienda(textoUnido)) {
+      const carrito = (carritoUsuario[userNumber] || []).map(i => i.nombre).join(", ");
+      clientesQueVanAIr[userNumber] = {
+        ciudad: ciudadActual,
+        productos: carrito || "los productos consultados",
+        hora: Date.now(),
+      };
+      console.log(`🏪 Cliente ${userNumber} dice que va a ir a la tienda (${ciudadActual})`);
+    }
+
     // ── Notificar al equipo correcto si hay pedido listo ──
     const pedidoListo = esCompraConfirmada ||
       reply.toLowerCase().includes("encargado") ||
@@ -1580,6 +1638,86 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200); // grupo no permitido — silencio total
     }
 
+    // ── Grupos DF: modo registro de muertes ──────────────────────────────────
+    const nombreGrupoLower = (groupName || "").toLowerCase();
+    const esGrupoDF = nombreGrupoLower.includes("dead fish") || nombreGrupoLower === "df";
+    if (esGrupoDF) {
+      // En grupos DF Pulpín solo registra y categoriza muertes — no vende
+      const sedeGrupo = nombreGrupoLower.includes("df") && !nombreGrupoLower.includes("dead") ? "pereira" : "toro";
+      const textoMuerte = esTexto ? userText : "[imagen sin descripción]";
+      
+      // Si mandaron imagen sin texto, pedir descripción
+      if (tipoMensaje === "image" && !message.text?.body?.trim()) {
+        await axios.post(`${WHAPI_URL}/messages/text`,
+          { to: userNumber, body: `📋 Registrando... ¿Puedes describir qué pasó? Indica:
+• Especie del animal
+• Síntomas observados
+• Causa probable
+• Precio de costo aprox.
+
+Ejemplo: "Betta macho, manchas blancas, posible Ich, $8.000"` },
+          { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+        );
+        return res.sendStatus(200);
+      }
+
+      // Analizar y categorizar la muerte con Claude
+      try {
+        const muerteResp = await axios.post(
+          "https://api.anthropic.com/v1/messages",
+          {
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 200,
+            system: `Eres el sistema de registro de AQUA, tienda de peces y hámsters. 
+Alguien reporta la muerte de un animal. Extrae y responde SOLO en este formato JSON:
+{"especie":"nombre","causa":"causa probable","costo":0,"categoria":"pez/hamster/otro","prevencion":"tip corto"}
+Si no hay suficiente info responde: {"error":"necesita_descripcion"}`,
+            messages: [{ role: "user", content: textoMuerte }]
+          },
+          { headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" } }
+        );
+        
+        const raw = muerteResp.data.content[0].text.trim();
+        let registro;
+        try { registro = JSON.parse(raw.replace(/```json|```/g, "").trim()); } catch(e) { registro = null; }
+
+        if (registro?.error) {
+          await axios.post(`${WHAPI_URL}/messages/text`,
+            { to: userNumber, body: `📋 Para registrar necesito más info:
+• ¿Qué especie era?
+• ¿Qué síntomas tenía?
+• ¿Cuál fue la causa probable?
+• ¿Cuánto costó? 🐙` },
+            { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+          );
+        } else if (registro) {
+          // Guardar en archivo de muertes
+          const fs = require("fs");
+          const archivoMuertes = require("path").join(__dirname, "registro_muertes.json");
+          let muertes = [];
+          try { muertes = JSON.parse(fs.readFileSync(archivoMuertes, "utf8")); } catch(e) {}
+          muertes.push({
+            fecha: new Date().toISOString(),
+            sede: sedeGrupo,
+            reportadoPor: perfilUsuario[userNumber]?.nombre || userNumber,
+            ...registro
+          });
+          fs.writeFileSync(archivoMuertes, JSON.stringify(muertes, null, 2));
+          
+          await axios.post(`${WHAPI_URL}/messages/text`,
+            { to: userNumber, body: `✅ Registrado:
+🐟 ${registro.especie} | Causa: ${registro.causa} | Costo: $${(registro.costo||0).toLocaleString("es-CO")}
+💡 Prevención: ${registro.prevencion || "N/A"}` },
+            { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+          );
+          console.log(`💀 Muerte registrada [${sedeGrupo}]: ${registro.especie} — ${registro.causa}`);
+        }
+      } catch(err) {
+        console.error("❌ Error registrando muerte:", err.message);
+      }
+      return res.sendStatus(200); // En grupos DF no procesar como chat normal
+    }
+
     // ── Filtro de etiquetas ──
     if (debeIgnorarPorEtiqueta(message.labels)) {
       console.log(`🏷️ Contacto con etiqueta bloqueada ignorado: ${userNumber}`);
@@ -1588,7 +1726,7 @@ app.post("/webhook", async (req, res) => {
 
 
 
-    // ── Comandos admin (solo tu número los puede usar) ──
+    // ── Comandos admin (solo 3137200415 puede usarlos) ──
     if (userNumber === `${NUMERO_ADMIN}@s.whatsapp.net` && esTexto) {
       const cmd = userText.toLowerCase().trim();
 
@@ -1785,6 +1923,55 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000); // revisa cada hora
 
+// ─── SEGUIMIENTO CLIENTES QUE IBAN A IR A LA TIENDA ─────────────────────────
+// Si alguien dijo "voy a ir", "paso por allá", "mañana recojo" etc → hacer seguimiento al final del día
+const frasesIrTienda = [
+  "voy a ir", "voy a pasar", "paso por allá", "paso mañana", "voy mañana",
+  "voy hoy", "voy esta tarde", "recojo", "me lo llevan", "paso a recoger",
+  "voy a recoger", "mañana paso", "hoy paso", "tarde paso",
+];
+
+function mencionaIrTienda(texto) {
+  return frasesIrTienda.some(f => texto.toLowerCase().includes(f));
+}
+
+const clientesQueVanAIr = {}; // { numero: { ciudad, productos, hora } }
+
+// Al final del día (8pm Colombia = 1am UTC) preguntar si fue
+setInterval(async () => {
+  const ahora = new Date();
+  const horaUTC = ahora.getUTCHours();
+  const minutos = ahora.getUTCMinutes();
+
+  if (horaUTC !== 1 || minutos > 10) return; // solo a las 8pm Colombia (~1am UTC)
+
+  for (const [numero, datos] of Object.entries(clientesQueVanAIr)) {
+    if (comprasConfirmadas[numero]) {
+      delete clientesQueVanAIr[numero];
+      continue; // ya compró, no molestar
+    }
+    const productos = datos.productos || "los productos que te interesaban";
+    const sede = datos.ciudad === "pereira" ? "la sede de Pereira" : "la sede de Toro";
+    const msg = `¡Hola! 🐙 Te escribo de AQUA para saber si pudiste pasar por ${sede} a ver ${productos}. ¿Lograste venir o prefieres que te ayudemos con el pedido? 😊`;
+    try {
+      await axios.post(`${WHAPI_URL}/messages/text`,
+        { to: numero, body: msg },
+        { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+      );
+      // Notificar a colaboradores de la sede
+      const colabs = datos.ciudad === "pereira" ? COLABORADORES_PEREIRA : COLABORADORES_TORO;
+      for (const col of colabs) {
+        await axios.post(`${WHAPI_URL}/messages/text`,
+          { to: `${col}@s.whatsapp.net`, body: `📋 Seguimiento enviado a ${numero} (${datos.ciudad || "Toro"}) — preguntó por: ${productos}` },
+          { headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, "Content-Type": "application/json" } }
+        );
+      }
+      delete clientesQueVanAIr[numero];
+      console.log(`📋 Seguimiento tienda enviado a ${numero}`);
+    } catch(e) { console.error(`❌ Error seguimiento tienda:`, e.message); }
+  }
+}, 5 * 60 * 1000);
+
 // ─── MEJORA A: RESCUE MESSAGE — clientes que se fueron sin comprar ────────────
 // Si una conversación lleva 45 min sin actividad y no hay compra registrada,
 // Pulpín manda un mensaje de recuperación personalizado (solo 1 vez)
@@ -1936,6 +2123,23 @@ setTimeout(() => location.reload(), 60000);
 });
 
 // ─── ENDPOINT ESTADO JSON (para integraciones) ────────────────────────────────
+// ─── ENDPOINT MUERTES (para agente analista) ─────────────────────────────────
+app.get("/muertes", (req, res) => {
+  const fs = require("fs");
+  const path = require("path");
+  const archivoMuertes = path.join(__dirname, "registro_muertes.json");
+  try {
+    const muertes = JSON.parse(fs.readFileSync(archivoMuertes, "utf8"));
+    // Últimas 7 días
+    const hace7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const recientes = muertes.filter(m => m.fecha >= hace7);
+    const costoTotal = recientes.reduce((s, m) => s + (m.costo || 0), 0);
+    res.json({ total: recientes.length, costoTotal, muertes: recientes });
+  } catch(e) {
+    res.json({ total: 0, costoTotal: 0, muertes: [] });
+  }
+});
+
 app.get("/estado", (req, res) => {
   if (req.query.pass !== PANEL_PASSWORD) return res.status(401).json({ error: "Sin autorización" });
   res.json({
